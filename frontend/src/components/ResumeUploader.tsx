@@ -13,6 +13,7 @@ const ResumeAnalyzer = () => {
         missing: string[];
     } | null>(null);
     const [jobDesc, setJobDesc] = useState('');
+    const [isTextExpanded, setIsTextExpanded] = useState(false);
 
     // File upload handler
     const onDrop = useCallback(async (files: File[]) => {
@@ -84,14 +85,21 @@ const ResumeAnalyzer = () => {
             </div>
 
             {/* Extracted Text */}
+
             {extractedText && (
                 <div style={sectionStyle}>
                     <h3>📄 Extracted Text</h3>
                     <div style={textBoxStyle}>
-                        {extractedText.length > 500
-                            ? `${extractedText.substring(0, 500)}...`
-                            : extractedText}
+                        {isTextExpanded
+                            ? extractedText
+                            : `${extractedText.substring(0, 500)}...`}
                     </div>
+                    <button
+                        onClick={() => setIsTextExpanded(!isTextExpanded)}
+                        style={{...toggleButtonStyle, marginRight: '10px'}}
+                    >
+                        {isTextExpanded ? 'Show Less' : 'Show More'}
+                    </button>
                     {resumeUrl && (
                         <a href={resumeUrl} target="_blank" rel="noopener noreferrer" style={linkStyle}>
                             View Full Resume
@@ -131,7 +139,7 @@ const KeywordsSection = ({
     keywords,
     jobDesc,
     setJobDesc,
-    onCompare
+    onCompare,
 }: {
     keywords: string[];
     jobDesc: string;
@@ -252,12 +260,15 @@ const linkStyle = {
 };
 
 const toggleButtonStyle = {
-    background: 'none',
-    border: '1px solid #ccc',
-    borderRadius: '4px',
-    padding: '2px 8px',
-    fontSize: '12px',
-    cursor: 'pointer'
+    background: '#007bff',
+    color: 'white',
+    border: 'none',
+    borderRadius: '20px',
+    padding: '8px 16px',
+    fontSize: '14px',
+    cursor: 'pointer',
+    transition: 'background-color 0.3s ease',
+    display: 'inline-block',
 };
 
 const textAreaStyle = {

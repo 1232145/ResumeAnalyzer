@@ -10,6 +10,8 @@ import boto3
 import os
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+import secrets
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
@@ -61,22 +63,27 @@ def extract_keywords(text):
         return []
 
 def upload_to_s3(file):
-    """Upload file to S3 and return secure URL"""
-    try:
-        file_key = f"uploads/{datetime.now().timestamp()}-{file.filename}"
-        s3.upload_fileobj(
-            file,
-            S3_BUCKET,
-            file_key,
-            ExtraArgs={
-                'ContentType': file.content_type,
-                'ACL': 'private'  # For security, we'll use pre-signed URLs
-            }
-        )
-        return file_key
-    except Exception as e:
-        app.logger.error(f"S3 upload failed: {str(e)}")
-        raise
+    """Secure file upload to S3 with validation"""
+    allowed_extensions = {'pdf', 'docx'}
+    file_ext = file.filename.split('.')[-1].lower()
+    
+    if file_ext not in allowed_extensions:
+        raise ValueError("Unsupported file type")
+
+    # Generate secure filename
+    safe_filename = f"uploads/{datetime.now().timestamp()}-{secrets.token_hex(8)}.{file_ext}"
+    
+    s3.upload_fileobj(
+        file,
+        S3_BUCKET,
+        safe_filename,
+        ExtraArgs={
+            'ContentType': file.content_type,
+            'ACL': 'private',  # For security
+            'ServerSideEncryption': 'AES256'  # Enable encryption
+        }
+    )
+    return safe_filename
 
 # API Endpoints
 @app.route('/parse-resume', methods=['POST'])

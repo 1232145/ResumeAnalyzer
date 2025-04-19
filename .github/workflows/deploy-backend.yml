@@ -1,7 +1,7 @@
 name: Deploy Backend
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
     paths: [ 'backend/**' ]  # Only trigger when backend files change
 
 jobs:

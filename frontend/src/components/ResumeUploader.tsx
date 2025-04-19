@@ -162,8 +162,8 @@ const KeywordsSection = ({
 
             {showKeywords && (
                 <div style={keywordsContainerStyle}>
-                    {keywords.map((word) => (
-                        <span key={word} style={keywordStyle}>
+                    {keywords.map((word, index) => (
+                        <span key={index} style={keywordStyle}>
                             {word}
                         </span>
                     ))}
@@ -195,8 +195,8 @@ const KeywordList = ({ title, keywords, color }: { title: string; keywords: stri
         <h4>{title}</h4>
         <div style={{ ...keywordsContainerStyle, background: color }}>
             {keywords.length > 0 ? (
-                keywords.map((word) => (
-                    <span key={word} style={keywordStyle}>
+                keywords.map((word, index) => (
+                    <span key={index} style={keywordStyle}>
                         {word}
                     </span>
                 ))

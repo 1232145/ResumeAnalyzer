@@ -1,0 +1,21 @@
+name: Deploy Backend
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'backend/**' ]  # Only trigger when backend files change
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install SSH Key
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+      
+      - name: Deploy to EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_IP }} \
+            "cd /home/ubuntu/resume-analyzer && ./deploy.sh"

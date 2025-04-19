@@ -69,7 +69,7 @@ const ResumeAnalyzer = () => {
 
     return (
         <div className="container" style={{ maxWidth: '800px', margin: '0 auto', padding: '20px' }}>
-            <h1 style={{color: "darkcyan"}}>Resume Analyzer</h1>
+            <h1 style={{color: "darkcyan"}}>Resume Analyzer v2.0</h1>
 
             {/* File Upload */}
             <div

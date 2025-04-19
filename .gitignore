@@ -27,4 +27,4 @@ backend/instance/
 *.pyo
 *.pyd
 .DS_Store
-.env
+backend/.env

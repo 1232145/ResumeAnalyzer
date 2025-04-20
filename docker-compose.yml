@@ -11,3 +11,9 @@ services:
       - ./backend/.env
     volumes:
       - ./backend:/app  # This maps your local files to the container (useful during development)
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

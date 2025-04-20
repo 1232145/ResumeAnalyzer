@@ -223,7 +223,7 @@ def health_check():
             "status": "healthy",
             "database": "connected",
             "timestamp": datetime.utcnow().isoformat(),
-            "version": '1.0.4'
+            "version": '1.0.5'
         })
     except Exception as e:
         logger.error(f"Health check failed: {str(e)}")

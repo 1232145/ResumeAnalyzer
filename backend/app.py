@@ -5,13 +5,20 @@ import re
 from nltk.corpus import stopwords
 import nltk
 from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate 
 from flask_cors import CORS
 import boto3
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from dotenv import load_dotenv
 import secrets
-from datetime import datetime
+import logging
+from werkzeug.utils import secure_filename
+from sqlalchemy import text
+
+# Initialize logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -21,83 +28,109 @@ app = Flask(__name__)
 CORS(app)
 
 # Database Configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///resume_analyzer.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = (
+    f"postgresql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@"
+    f"{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
+)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB file size limit
 db = SQLAlchemy(app)
 
+# Initialize Flask-Migrate
+migrate = Migrate(app, db)
+
 # S3 Configuration
-S3_BUCKET = os.getenv('S3_BUCKET', 'resume-analyzer-files')
-S3_REGION = os.getenv('S3_REGION', 'eu-north-1')
+S3_BUCKET = os.getenv('S3_BUCKET')
+S3_REGION = os.getenv('S3_REGION')
 s3 = boto3.client(
     's3',
     region_name=S3_REGION,
     aws_access_key_id=os.getenv('AWS_ACCESS_KEY'),
-    aws_secret_access_key=os.getenv('AWS_SECRET_KEY')
+    aws_secret_access_key=os.getenv('AWS_SECRET_KEY'),
+    config=boto3.session.Config(signature_version='s3v4')
 )
 
 # Database Model
 class Analysis(db.Model):
+    __tablename__ = 'analyses'
     id = db.Column(db.Integer, primary_key=True)
-    resume_keywords = db.Column(db.JSON)
-    s3_key = db.Column(db.String(255))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-# Initialize DB
-with app.app_context():
-    db.create_all()
+    resume_keywords = db.Column(db.JSON, nullable=False)
+    s3_key = db.Column(db.String(255), unique=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
+    user_ip = db.Column(db.String(45))  # Store IPv4/IPv6 addresses
 
 # Helper Functions
 def extract_keywords(text):
-    """Extract keywords from text using NLP techniques"""
+    """Enhanced keyword extraction with error handling"""
     try:
         nltk.download('stopwords', quiet=True)
         stop_words = set(stopwords.words('english'))
-        words = re.findall(r'\w+', text.lower())
-        return [word for word in words 
-                if word not in stop_words 
-                and len(word) > 3 
-                and not word.isnumeric()]
+        words = re.findall(r'\b[a-zA-Z]+\b', text.lower())  # Better word matching
+        keywords = [
+            word for word in words 
+            if word not in stop_words 
+            and len(word) > 3 
+            and not word.isnumeric()
+        ]
+        return list(set(keywords))  # Remove duplicates
     except Exception as e:
-        app.logger.error(f"Keyword extraction failed: {str(e)}")
+        logger.error(f"Keyword extraction error: {str(e)}")
         return []
 
-def upload_to_s3(file):
-    """Secure file upload to S3 with validation"""
-    allowed_extensions = {'pdf', 'docx'}
-    file_ext = file.filename.split('.')[-1].lower()
+def validate_file(file):
+    """Secure file validation"""
+    if not file:
+        raise ValueError("No file provided")
     
-    if file_ext not in allowed_extensions:
-        raise ValueError("Unsupported file type")
+    filename = secure_filename(file.filename)
+    if not filename:
+        raise ValueError("Invalid filename")
+    
+    ext = filename.split('.')[-1].lower()
+    if ext not in {'pdf', 'docx'}:
+        raise ValueError("Only PDF and DOCX files are allowed")
+    
+    return filename, ext
 
-    # Generate secure filename
-    safe_filename = f"uploads/{datetime.now().timestamp()}-{secrets.token_hex(8)}.{file_ext}"
+def upload_to_s3(file):
+    """Secure S3 upload with validation"""
+    filename, ext = validate_file(file)
     
-    s3.upload_fileobj(
-        file,
-        S3_BUCKET,
-        safe_filename,
-        ExtraArgs={
-            'ContentType': file.content_type,
-            'ACL': 'private',  # For security
-            'ServerSideEncryption': 'AES256'  # Enable encryption
-        }
+    # Generate secure path
+    s3_key = (
+        f"uploads/{filename}/{datetime.now().strftime('%Y/%m/%d')}/"
+        f"{secrets.token_hex(8)}.{ext}"
     )
-    return safe_filename
+    
+    try:
+        s3.upload_fileobj(
+            file,
+            S3_BUCKET,
+            s3_key,
+            ExtraArgs={
+                'ContentType': (
+                    'application/pdf' if ext == 'pdf' 
+                    else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                ),
+                'ACL': 'private',
+                'ServerSideEncryption': 'AES256'
+            }
+        )
+        return s3_key
+    except Exception as e:
+        logger.error(f"S3 upload failed: {str(e)}")
+        raise
 
 # API Endpoints
 @app.route('/parse-resume', methods=['POST'])
 def parse_resume():
-    """Endpoint for resume parsing and analysis"""
+    """Secure resume parsing endpoint"""
     if 'file' not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
 
     file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "Empty filename"}), 400
-
     try:
-        # File parsing
+        # File processing
         text = ""
         if file.filename.endswith('.pdf'):
             with pdfplumber.open(file) as pdf:
@@ -106,64 +139,64 @@ def parse_resume():
             doc = Document(file)
             text = "\n".join(para.text for para in doc.paragraphs)
         else:
-            return jsonify({"error": "Unsupported file type. Use PDF or DOCX"}), 400
+            return jsonify({"error": "Unsupported file type"}), 400
 
-        # Store in S3
+        # Store and analyze
         s3_key = upload_to_s3(file)
-        presigned_url = s3.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': S3_BUCKET, 'Key': s3_key},
-            ExpiresIn=3600  # 1-hour access
-        )
-
-        # Analysis
         keywords = extract_keywords(text)
         
-        # Save to database
+        # Save to DB
         analysis = Analysis(
             resume_keywords=keywords,
-            s3_key=s3_key
+            s3_key=s3_key,
+            user_ip=request.remote_addr
         )
         db.session.add(analysis)
         db.session.commit()
 
+        # Generate presigned URL
+        presigned_url = s3.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': S3_BUCKET, 'Key': s3_key},
+            ExpiresIn=3600
+        )
+
         return jsonify({
-            "text": text[:5000] + "..." if len(text) > 5000 else text,  # Limit response size
+            "analysis_id": analysis.id,
             "keywords": keywords,
             "resume_url": presigned_url,
-            "analysis_id": analysis.id
+            "text_preview": text[:1000]  # Return limited text
         })
 
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
-        app.logger.error(f"Resume parsing failed: {str(e)}")
-        return jsonify({"error": "Processing failed. Please try again."}), 500
+        logger.error(f"Processing error: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/compare', methods=['POST'])
-def compare():
-    """Compare resume keywords with job description"""
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "No data provided"}), 400
-
-    resume_keywords = set(data.get('resume_keywords', []))
-    job_description = data.get('job_description', "")
-
-    if not job_description:
-        return jsonify({"error": "Job description is required"}), 400
-
+def compare_keywords():
+    """Job description comparison endpoint"""
     try:
-        job_keywords = set(extract_keywords(job_description))
+        data = request.get_json()
+        if not data or 'job_description' not in data:
+            raise ValueError("Invalid request data")
+
+        resume_keywords = set(data.get('resume_keywords', []))
+        job_keywords = set(extract_keywords(data['job_description']))
+        
         return jsonify({
             "matches": sorted(list(job_keywords & resume_keywords)),
-            "missing": sorted(list(job_keywords - resume_keywords))
+            "missing": sorted(list(job_keywords - resume_keywords)),
+            "score": len(job_keywords & resume_keywords) / max(len(job_keywords), 1) * 100
         })
     except Exception as e:
-        app.logger.error(f"Comparison failed: {str(e)}")
+        logger.error(f"Comparison error: {str(e)}")
         return jsonify({"error": "Comparison failed"}), 500
 
 @app.route('/analysis/<int:analysis_id>', methods=['GET'])
 def get_analysis(analysis_id):
-    """Retrieve previous analysis"""
+    """Analysis retrieval endpoint"""
     try:
         analysis = Analysis.query.get_or_404(analysis_id)
         presigned_url = s3.generate_presigned_url(
@@ -178,13 +211,23 @@ def get_analysis(analysis_id):
             "created_at": analysis.created_at.isoformat()
         })
     except Exception as e:
-        app.logger.error(f"Analysis retrieval failed: {str(e)}")
+        logger.error(f"Retrieval error: {str(e)}")
         return jsonify({"error": "Analysis not found"}), 404
 
-# Health Check
+# Health endpoints
 @app.route('/health', methods=['GET'])
 def health_check():
-    return jsonify({"status": "healthy", "timestamp": datetime.utcnow().isoformat()})
+    try:
+        db.session.execute(text('SELECT 1'))
+        return jsonify({
+            "status": "healthy",
+            "database": "connected",
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return jsonify({"status": "unhealthy"}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=os.getenv('FLASK_DEBUG', 'False') == 'True')
+    port = int(os.getenv('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=os.getenv('FLASK_DEBUG') == 'True')

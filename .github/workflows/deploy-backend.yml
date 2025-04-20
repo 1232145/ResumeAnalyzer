@@ -1,21 +1,67 @@
 name: Deploy Backend
+
 on:
   push:
     branches: [ master ]
-    paths: [ 'backend/**' ]  # Only trigger when backend files change
+    paths: [ 'backend/**' ]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      DB_NAME: ${{ secrets.RDS.DB_NAME }}
+      FLASK_DEBUG: False
+
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install SSH Key
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Add SSH key
         uses: webfactory/ssh-agent@v0.7.0
         with:
           ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
-      
-      - name: Deploy to EC2
+
+      - name: Deploy and migrate
         run: |
-          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_IP }} \
-            "cd /home/ubuntu && ./deploy.sh"
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_IP }} << 'EOF'
+          set -e
+          cd /home/ubuntu/ResumeAnalyzer
+
+          # Pull the latest code from GitHub
+          git fetch origin
+          git reset --hard origin/master
+
+          # Create .env file with necessary secrets
+          cat > backend/.env << 'ENV_EOF'
+          DB_NAME=${{ secrets.RDS.DB_NAME }}
+          DB_USER=${{ secrets.RDS_DB_USER }}
+          DB_PASSWORD=${{ secrets.RDS_DB_PASSWORD }}
+          DB_HOST=${{ secrets.RDS_DB_ENDPOINT }}
+          DB_PORT=${{ secrets.RDS_DB_PORT }}
+          AWS_ACCESS_KEY=${{ secrets.AWS_ACCESS_KEY }}
+          AWS_SECRET_KEY=${{ secrets.AWS_SECRET_KEY }}
+          S3_BUCKET=${{ secrets.AWS_S3_BUCKET }}
+          S3_REGION=${{ secrets.AWS_REGION }}
+          FLASK_DEBUG=False
+          ENV_EOF
+
+          # Install PostgreSQL client if missing
+          sudo apt-get update -qq
+          sudo apt-get install -y libpq-dev python3-dev
+
+          # Docker operations
+          docker-compose down
+          docker-compose build
+          docker-compose run --rm backend flask db upgrade  # Run the migration
+          docker-compose up -d
+
+          # Cleanup unused Docker images
+          docker image prune -f
+          EOF

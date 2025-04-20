@@ -17,6 +17,6 @@ services:
       - AWS_ACCESS_KEY=${AWS_ACCESS_KEY}
       - AWS_SECRET_KEY=${AWS_SECRET_KEY}
     env_file:
-      - .env
+      - ./backend/.env
     volumes:
       - ./backend:/app  # This maps your local files to the container (useful during development)

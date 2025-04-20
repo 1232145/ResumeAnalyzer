@@ -58,16 +58,18 @@ jobs:
 
           # Ensure Docker is running
           sudo systemctl start docker
+          sudo systemctl status docker
 
           # Docker operations
+          docker-compose down
           docker-compose build
-          docker-compose run --rm backend flask db upgrade  # Run the migration
+          docker-compose run --rm backend flask db upgrade
           docker-compose up -d
 
           # Cleanup unused Docker images
           docker image prune -f
 
           # Verify container is running
-          sleep 10
+          sleep 30
           docker ps
           EOF

@@ -34,7 +34,7 @@ jobs:
       
       - name: Sync files
         run: |
-          aws s3 sync frontend/build s3://resume-analyzer-frontend --delete
+          aws s3 sync frontend/build s3://resume-analyzer-fe --delete
       
       - name: Invalidate CloudFront cache
         run: |
